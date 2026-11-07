@@ -147,7 +147,13 @@ const app = new Elysia({ adapter: CloudflareAdapter, aot: false, normalize: 'typ
 
 export default {
   async fetch(request: Request): Promise<Response> {
-    const rejected = await rejectInvalidSignature(env, request);
-    return rejected ?? (await app.fetch(request));
+    if (request.method === 'GET' || request.method === 'HEAD') {
+      const rejected = rejectInvalidSignature(env, request, '');
+      return rejected ?? (await app.fetch(request));
+    }
+    const body = await request.text();
+    const rejected = rejectInvalidSignature(env, request, body);
+    if (rejected) return rejected;
+    return app.fetch(new Request(request, { body }));
   },
 };
