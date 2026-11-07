@@ -41,10 +41,6 @@ function mirrorNotSeededResponse(error: unknown): Response | null {
   return null;
 }
 
-async function readJson(request: Request): Promise<unknown> {
-  return request.clone().json().catch(() => null);
-}
-
 const app = new Elysia({ adapter: CloudflareAdapter, aot: false, normalize: 'typebox' })
   .onError(({ error, code }) => {
     if (code === 'NOT_FOUND') {
@@ -62,14 +58,14 @@ const app = new Elysia({ adapter: CloudflareAdapter, aot: false, normalize: 'typ
     const result = await ensureBucket(env);
     return Response.json({ bucket: result.bucket, created: result.created });
   })
-  .post('/api/internal/repositories/access', async ({ request }) => {
-    const parsed = accessRequestSchema.safeParse(await readJson(request));
+  .post('/api/internal/repositories/access', async ({ body }) => {
+    const parsed = accessRequestSchema.safeParse(body);
     if (!parsed.success) return Response.json({ error: 'Bad Request' }, { status: 400 });
     const access = await checkRepositoryAccess(env, parsed.data.repositoryId);
     return Response.json(access);
   })
-  .post('/api/internal/mirrors/upload-url', async ({ request }) => {
-    const parsed = uploadUrlRequestSchema.safeParse(await readJson(request));
+  .post('/api/internal/mirrors/upload-url', async ({ body }) => {
+    const parsed = uploadUrlRequestSchema.safeParse(body);
     if (!parsed.success) return Response.json({ error: 'Bad Request' }, { status: 400 });
     const result = await runMirrorUploadUrl(env, parsed.data.repositoryId, parsed.data.repositoryFullName);
     if ('outcome' in result && result.outcome === 'blocked') {
@@ -87,8 +83,8 @@ const app = new Elysia({ adapter: CloudflareAdapter, aot: false, normalize: 'typ
     }
     return Response.json(result);
   })
-  .post('/api/internal/mirrors/sync', async ({ request }) => {
-    const parsed = organizationRepositorySchema.safeParse(await readJson(request));
+  .post('/api/internal/mirrors/sync', async ({ body }) => {
+    const parsed = organizationRepositorySchema.safeParse(body);
     if (!parsed.success) return Response.json({ error: 'Bad Request' }, { status: 400 });
     let result: Awaited<ReturnType<typeof runMirrorSync>>;
     try {
@@ -118,8 +114,8 @@ const app = new Elysia({ adapter: CloudflareAdapter, aot: false, normalize: 'typ
     }
     return Response.json(result);
   })
-  .post('/api/internal/mirrors/commit', async ({ request }) => {
-    const parsed = commitRequestSchema.safeParse(await readJson(request));
+  .post('/api/internal/mirrors/commit', async ({ body }) => {
+    const parsed = commitRequestSchema.safeParse(body);
     if (!parsed.success) return Response.json({ error: 'Bad Request' }, { status: 400 });
     let result: Awaited<ReturnType<typeof runSignedCommit>>;
     try {
@@ -147,13 +143,7 @@ const app = new Elysia({ adapter: CloudflareAdapter, aot: false, normalize: 'typ
 
 export default {
   async fetch(request: Request): Promise<Response> {
-    if (request.method === 'GET' || request.method === 'HEAD') {
-      const rejected = rejectInvalidSignature(env, request, '');
-      return rejected ?? (await app.fetch(request));
-    }
-    const body = await request.text();
-    const rejected = rejectInvalidSignature(env, request, body);
-    if (rejected) return rejected;
-    return app.fetch(new Request(request, { body }));
+    const rejected = await rejectInvalidSignature(env, request);
+    return rejected ?? (await app.fetch(request));
   },
 };
