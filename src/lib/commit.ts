@@ -20,11 +20,9 @@ export const commitRequestSchema = z.object({
   baseBranch: z.string().min(1).optional(),
   message: z.string().min(1),
   fileChanges: z.array(z.object({ path: z.string().min(1), content: z.string() })).optional(),
-  fileDeletions: z.array(z.string().min(1)).optional(),
   gitlinkChanges: z
     .array(z.object({ path: z.string().min(1), oid: z.string().min(7) }))
     .optional(),
-  gitlinkRemovals: z.array(z.string().min(1)).optional(),
   gitmodulesAdditions: z
     .array(
       z.object({
@@ -34,24 +32,8 @@ export const commitRequestSchema = z.object({
       })
     )
     .optional(),
-  gitmodulesRemovals: z.array(z.string().min(1)).optional(),
   expectGitlinkPath: z.string().min(1).optional(),
 });
-
-function removeGitmodulesSection(content: string, path: string): string {
-  const lines = content.split('\n');
-  const kept: string[] = [];
-  let skipping = false;
-  for (const line of lines) {
-    if (line.startsWith('[')) skipping = line === `[submodule "${path}"]`;
-    if (!skipping) kept.push(line);
-  }
-  return kept
-    .join('\n')
-    .replace(/\n{3,}/g, '\n\n')
-    .replace(/^\n+/, '')
-    .replace(/\n*$/, '\n');
-}
 
 export type CommitRequest = z.infer<typeof commitRequestSchema>;
 
@@ -100,9 +82,6 @@ export async function runSignedCommit(env: Env, input: CommitRequest): Promise<C
   for (const change of input.fileChanges ?? []) {
     await workspace.writeTextFile(change.path, change.content);
   }
-  for (const deletion of input.fileDeletions ?? []) {
-    await workspace.removeFile(deletion);
-  }
   for (const addition of input.gitmodulesAdditions ?? []) {
     const existing = await workspace.readTextFile('.gitmodules');
     if (!existing || !existing.includes(`[submodule "${addition.path}"]`)) {
@@ -110,22 +89,8 @@ export async function runSignedCommit(env: Env, input: CommitRequest): Promise<C
       await workspace.writeTextFile('.gitmodules', existing ? `${existing.replace(/\n*$/, '\n')}${section}` : section);
     }
   }
-  for (const removal of input.gitmodulesRemovals ?? []) {
-    const existing = await workspace.readTextFile('.gitmodules');
-    if (existing && existing.includes(`[submodule "${removal}"]`)) {
-      const updated = removeGitmodulesSection(existing, removal);
-      if (updated.trim()) {
-        await workspace.writeTextFile('.gitmodules', updated);
-      } else {
-        await workspace.removeFile('.gitmodules');
-      }
-    }
-  }
   for (const change of input.gitlinkChanges ?? []) {
     workspace.setGitlink(change.path, change.oid);
-  }
-  for (const removal of input.gitlinkRemovals ?? []) {
-    workspace.removeGitlink(removal);
   }
   const committed = await workspace.commitSigned(
     input.message,
