@@ -23,6 +23,19 @@ const pullRequestSchema = z.object({
   node_id: z.string(),
 });
 
+const associatedPullRequestSchema = z.object({
+  number: z.number(),
+  html_url: z.string(),
+  merged_at: z.string().nullable(),
+  merge_commit_sha: z.string().nullable(),
+  head: z.object({ ref: z.string() }),
+});
+
+const issueCommentSchema = z.object({
+  id: z.number(),
+  html_url: z.string(),
+});
+
 export interface InstallationRepository {
   id: number;
   fullName: string;
@@ -182,6 +195,52 @@ export async function createBotPullRequest(
   }
   return { number: created.number, url: created.html_url, autoMergeEnabled: input.enableAutoMerge ?? false };
 }
+
+export async function findMergedPullRequestByCommit(
+  env: Env,
+  organizationId: string,
+  repositoryFullName: string,
+  sha: string
+): Promise<{ number: number; url: string; headRef: string } | null> {
+  const token = await getInstallationToken(env, organizationId);
+  const associated = await githubJson(
+    token,
+    `/repos/${repositoryFullName}/commits/${sha}/pulls`,
+    z.array(associatedPullRequestSchema)
+  );
+  const merged = associated.filter((entry) => entry.merged_at !== null);
+  const match = merged.find((entry) => entry.merge_commit_sha === sha) ?? merged[0];
+  if (!match) return null;
+  return { number: match.number, url: match.html_url, headRef: match.head.ref };
+}
+
+export async function createIssueComment(
+  env: Env,
+  organizationId: string,
+  repositoryFullName: string,
+  issueNumber: number,
+  body: string
+): Promise<{ url: string }> {
+  const token = await getInstallationToken(env, organizationId);
+  const created = await githubJson(token, `/repos/${repositoryFullName}/issues/${issueNumber}/comments`, issueCommentSchema, {
+    method: 'POST',
+    body: JSON.stringify({ body }),
+  });
+  return { url: created.html_url };
+}
+
+export const findPullRequestByCommitRequestSchema = z.object({
+  organizationId: z.string().min(1),
+  repositoryFullName: z.string().min(1),
+  sha: z.string().min(1),
+});
+
+export const createCommentRequestSchema = z.object({
+  organizationId: z.string().min(1),
+  repositoryFullName: z.string().min(1),
+  issueNumber: z.number().int().positive(),
+  body: z.string().min(1),
+});
 
 export const listRepositoriesRequestSchema = z.object({
   organizationId: z.string().min(1),

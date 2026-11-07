@@ -13,9 +13,13 @@ import {
 import { ApiAuthError } from './lib/api-auth';
 import {
   createBotPullRequest,
+  createCommentRequestSchema,
   createInstallationRepository,
+  createIssueComment,
   createPullRequestRequestSchema,
   createRepositoryRequestSchema,
+  findMergedPullRequestByCommit,
+  findPullRequestByCommitRequestSchema,
   listInstallationRepositories,
   listRepositoriesRequestSchema,
 } from './lib/github-repositories';
@@ -102,6 +106,29 @@ const app = new Elysia({ adapter: CloudflareAdapter, aot: false, normalize: 'typ
     const { organizationId, ...input } = parsed.data;
     const pullRequest = await createBotPullRequest(env, organizationId, input);
     return Response.json({ pullRequest });
+  })
+  .post('/api/internal/pull-requests/find-by-commit', async ({ body }) => {
+    const parsed = findPullRequestByCommitRequestSchema.safeParse(body);
+    if (!parsed.success) return Response.json({ error: 'Bad Request' }, { status: 400 });
+    const pullRequest = await findMergedPullRequestByCommit(
+      env,
+      parsed.data.organizationId,
+      parsed.data.repositoryFullName,
+      parsed.data.sha
+    );
+    return Response.json({ pullRequest });
+  })
+  .post('/api/internal/comments/create', async ({ body }) => {
+    const parsed = createCommentRequestSchema.safeParse(body);
+    if (!parsed.success) return Response.json({ error: 'Bad Request' }, { status: 400 });
+    const comment = await createIssueComment(
+      env,
+      parsed.data.organizationId,
+      parsed.data.repositoryFullName,
+      parsed.data.issueNumber,
+      parsed.data.body
+    );
+    return Response.json({ comment });
   })
   .post('/api/internal/mirrors/upload-url', async ({ body }) => {
     const parsed = uploadUrlRequestSchema.safeParse(body);
