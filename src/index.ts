@@ -11,6 +11,14 @@ import {
   runSignedCommit,
 } from './lib/commit';
 import { ApiAuthError } from './lib/api-auth';
+import {
+  createBotPullRequest,
+  createInstallationRepository,
+  createPullRequestRequestSchema,
+  createRepositoryRequestSchema,
+  listInstallationRepositories,
+  listRepositoriesRequestSchema,
+} from './lib/github-repositories';
 import { checkRepositoryAccess } from './lib/repository-access';
 import { rejectInvalidSignature } from './lib/signature-gate';
 import { ensureBucket } from './lib/storage';
@@ -67,6 +75,26 @@ const app = new Elysia({ adapter: CloudflareAdapter, aot: false, normalize: 'typ
     if (!parsed.success) return Response.json({ error: 'Bad Request' }, { status: 400 });
     const access = await checkRepositoryAccess(env, parsed.data.repositoryId);
     return Response.json(access);
+  })
+  .post('/api/internal/repositories/list', async ({ body }) => {
+    const parsed = listRepositoriesRequestSchema.safeParse(body);
+    if (!parsed.success) return Response.json({ error: 'Bad Request' }, { status: 400 });
+    const repositories = await listInstallationRepositories(env, parsed.data.organizationId);
+    return Response.json({ repositories });
+  })
+  .post('/api/internal/repositories/create', async ({ body }) => {
+    const parsed = createRepositoryRequestSchema.safeParse(body);
+    if (!parsed.success) return Response.json({ error: 'Bad Request' }, { status: 400 });
+    const { organizationId, targetType, targetLogin, ...repository } = parsed.data;
+    const created = await createInstallationRepository(env, organizationId, { type: targetType, login: targetLogin }, repository);
+    return Response.json({ repository: created });
+  })
+  .post('/api/internal/pull-requests/create', async ({ body }) => {
+    const parsed = createPullRequestRequestSchema.safeParse(body);
+    if (!parsed.success) return Response.json({ error: 'Bad Request' }, { status: 400 });
+    const { organizationId, ...input } = parsed.data;
+    const pullRequest = await createBotPullRequest(env, organizationId, input);
+    return Response.json({ pullRequest });
   })
   .post('/api/internal/mirrors/upload-url', async ({ body }) => {
     const parsed = uploadUrlRequestSchema.safeParse(body);
