@@ -37,13 +37,5 @@ export async function reregisterAppWebhook(env: Env, input: { url: string; secre
     throw new Error(JSON.stringify({ error: 'github_api_error', status: configResponse.status, path: configPath }));
   }
   const config = appHookConfigSchema.parse(await configResponse.json().catch(() => null));
-  const hookPath = '/app/hook';
-  const hookResponse = await githubFetch(jwt, hookPath, {
-    method: 'PATCH',
-    body: JSON.stringify({ active: true }),
-  });
-  if (!hookResponse.ok) {
-    throw new Error(JSON.stringify({ error: 'github_api_error', status: hookResponse.status, path: hookPath }));
-  }
   return { url: config.url };
 }
