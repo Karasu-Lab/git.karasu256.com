@@ -1,5 +1,25 @@
 import { MissingEnvError, signRequest } from '@karasu-lab/utils/server';
 
+export class ApiAuthError extends Error {
+  readonly status: number;
+  readonly code: string | null;
+
+  constructor(status: number, code: string | null, detail: string) {
+    super(`api-auth request failed (${status}): ${detail}`);
+    this.status = status;
+    this.code = code;
+  }
+}
+
+function errorCodeOf(detail: string): string | null {
+  try {
+    const parsed = JSON.parse(detail) as { error?: unknown };
+    return typeof parsed.error === 'string' ? parsed.error : null;
+  } catch {
+    return null;
+  }
+}
+
 async function apiAuthJson<T>(env: Env, path: string, body: unknown): Promise<T> {
   const secret = env.INTERNAL_API_SECRET;
   if (!secret) throw new MissingEnvError('INTERNAL_API_SECRET');
@@ -17,7 +37,7 @@ async function apiAuthJson<T>(env: Env, path: string, body: unknown): Promise<T>
   });
   if (!response.ok) {
     const detail = await response.text().catch(() => '');
-    throw new Error(`api-auth request failed (${response.status}): ${detail.slice(0, 300)}`);
+    throw new ApiAuthError(response.status, errorCodeOf(detail), detail.slice(0, 300));
   }
   return (await response.json()) as T;
 }

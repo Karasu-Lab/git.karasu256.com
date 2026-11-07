@@ -10,6 +10,7 @@ import {
   runMirrorUploadUrl,
   runSignedCommit,
 } from './lib/commit';
+import { ApiAuthError } from './lib/api-auth';
 import { checkRepositoryAccess } from './lib/repository-access';
 import { rejectInvalidSignature } from './lib/signature-gate';
 import { ensureBucket } from './lib/storage';
@@ -45,6 +46,9 @@ const app = new Elysia({ adapter: CloudflareAdapter, aot: false, normalize: 'typ
   .onError(({ error, code }) => {
     if (code === 'NOT_FOUND') {
       return Response.json({ error: 'not_found' }, { status: 404 });
+    }
+    if (error instanceof ApiAuthError && error.code) {
+      return Response.json({ error: error.code }, { status: error.status });
     }
     if (error instanceof z.ZodError) {
       return Response.json({ error: 'Bad Request', issues: error.issues.map((issue) => issue.message) }, { status: 400 });
