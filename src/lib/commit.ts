@@ -32,6 +32,8 @@ export const commitRequestSchema = z.object({
       })
     )
     .optional(),
+  gitlinkRemovals: z.array(z.string().min(1)).optional(),
+  gitmodulesRemovals: z.array(z.string().min(1)).optional(),
   expectGitlinkPath: z.string().min(1).optional(),
 });
 
@@ -91,6 +93,26 @@ export async function runSignedCommit(env: Env, input: CommitRequest): Promise<C
   }
   for (const change of input.gitlinkChanges ?? []) {
     workspace.setGitlink(change.path, change.oid);
+  }
+  for (const path of input.gitmodulesRemovals ?? []) {
+    const existing = await workspace.readTextFile('.gitmodules');
+    if (existing) {
+      const kept: string[] = [];
+      let skipping = false;
+      for (const line of existing.split('\n')) {
+        if (line.startsWith('[')) skipping = line === `[submodule "${path}"]`;
+        if (!skipping) kept.push(line);
+      }
+      const remaining = kept.join('\n');
+      if (remaining.trim()) {
+        await workspace.writeTextFile('.gitmodules', remaining.endsWith('\n') ? remaining : `${remaining}\n`);
+      } else {
+        await workspace.removeTextFile('.gitmodules');
+      }
+    }
+  }
+  for (const path of input.gitlinkRemovals ?? []) {
+    workspace.removeGitlink(path);
   }
   const committed = await workspace.commitSigned(
     input.message,
