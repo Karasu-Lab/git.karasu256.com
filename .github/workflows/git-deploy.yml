@@ -1,0 +1,53 @@
+name: Git Deploy
+
+on:
+  push:
+    branches: ["**"]
+  workflow_dispatch:
+
+# Deployment itself lives in Karasu-Lab/WorkersDeploy: it deploys this
+# app standalone from this repository, detects the ElysiaJS project,
+# builds it with Vite, and deploys it to Cloudflare Workers.
+
+jobs:
+  deploy:
+    if: github.ref_name == 'main'
+    environment: production
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: read
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+      NODE_AUTH_TOKEN: ${{ secrets.NODE_AUTH_TOKEN || secrets.GITHUB_TOKEN }}
+    steps:
+      - name: Deploy the worker
+        uses: Karasu-Lab/WorkersDeploy@v1
+        with:
+          mode: production
+          worker-name: git-karasu256-com
+          secret-names: INTERNAL_API_SECRET STORAGE_ACCESS_KEY_ID STORAGE_SECRET_ACCESS_KEY
+          vars-json: ${{ toJSON(vars) }}
+          secrets-json: ${{ toJSON(secrets) }}
+
+  preview:
+    if: github.ref_name != 'main'
+    environment: preview
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: read
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+      NODE_AUTH_TOKEN: ${{ secrets.NODE_AUTH_TOKEN || secrets.GITHUB_TOKEN }}
+    steps:
+      - name: Deploy the worker
+        uses: Karasu-Lab/WorkersDeploy@v1
+        with:
+          mode: preview
+          worker-name: git-karasu256-com
+          secret-names: INTERNAL_API_SECRET STORAGE_ACCESS_KEY_ID STORAGE_SECRET_ACCESS_KEY
+          vars-json: ${{ toJSON(vars) }}
+          secrets-json: ${{ toJSON(secrets) }}
