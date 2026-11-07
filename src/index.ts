@@ -14,14 +14,18 @@ import { ApiAuthError } from './lib/api-auth';
 import {
   createBotPullRequest,
   createCommentRequestSchema,
+  createCommitStatus,
   createInstallationRepository,
   createIssueComment,
   createPullRequestRequestSchema,
   createRepositoryRequestSchema,
+  createStatusRequestSchema,
   findMergedPullRequestByCommit,
   findPullRequestByCommitRequestSchema,
   listInstallationRepositories,
   listRepositoriesRequestSchema,
+  updateCommentRequestSchema,
+  updateIssueComment,
 } from './lib/github-repositories';
 import { checkRepositoryAccess } from './lib/repository-access';
 import { rejectInvalidSignature } from './lib/signature-gate';
@@ -122,6 +126,29 @@ const app = new Elysia({ adapter: CloudflareAdapter, aot: false, normalize: 'typ
       parsed.data.body
     );
     return Response.json({ comment });
+  })
+  .post('/api/internal/comments/update', async ({ body }) => {
+    const parsed = updateCommentRequestSchema.safeParse(body);
+    if (!parsed.success) return Response.json({ error: 'Bad Request' }, { status: 400 });
+    const comment = await updateIssueComment(
+      env,
+      parsed.data.organizationId,
+      parsed.data.repositoryFullName,
+      parsed.data.commentId,
+      parsed.data.body
+    );
+    return Response.json({ comment });
+  })
+  .post('/api/internal/statuses/create', async ({ body }) => {
+    const parsed = createStatusRequestSchema.safeParse(body);
+    if (!parsed.success) return Response.json({ error: 'Bad Request' }, { status: 400 });
+    const status = await createCommitStatus(env, parsed.data.organizationId, parsed.data.repositoryFullName, parsed.data.sha, {
+      state: parsed.data.state,
+      context: parsed.data.context,
+      description: parsed.data.description,
+      targetUrl: parsed.data.targetUrl,
+    });
+    return Response.json({ status });
   })
   .post('/api/internal/mirrors/upload-url', async ({ body }) => {
     const parsed = uploadUrlRequestSchema.safeParse(body);

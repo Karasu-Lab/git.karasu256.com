@@ -28,7 +28,7 @@ const associatedPullRequestSchema = z.object({
   html_url: z.string(),
   merged_at: z.string().nullable(),
   merge_commit_sha: z.string().nullable(),
-  head: z.object({ ref: z.string() }),
+  head: z.object({ ref: z.string(), sha: z.string() }),
 });
 
 const issueCommentSchema = z.object({
@@ -201,7 +201,7 @@ export async function findMergedPullRequestByCommit(
   organizationId: string,
   repositoryFullName: string,
   sha: string
-): Promise<{ number: number; url: string; headRef: string } | null> {
+): Promise<{ number: number; url: string; headRef: string; headSha: string } | null> {
   const token = await getInstallationToken(env, organizationId);
   const associated = await githubJson(
     token,
@@ -211,7 +211,7 @@ export async function findMergedPullRequestByCommit(
   const merged = associated.filter((entry) => entry.merged_at !== null);
   const match = merged.find((entry) => entry.merge_commit_sha === sha) ?? merged[0];
   if (!match) return null;
-  return { number: match.number, url: match.html_url, headRef: match.head.ref };
+  return { number: match.number, url: match.html_url, headRef: match.head.ref, headSha: match.head.sha };
 }
 
 export async function createIssueComment(
@@ -220,13 +220,54 @@ export async function createIssueComment(
   repositoryFullName: string,
   issueNumber: number,
   body: string
-): Promise<{ url: string }> {
+): Promise<{ id: number; url: string }> {
   const token = await getInstallationToken(env, organizationId);
   const created = await githubJson(token, `/repos/${repositoryFullName}/issues/${issueNumber}/comments`, issueCommentSchema, {
     method: 'POST',
     body: JSON.stringify({ body }),
   });
-  return { url: created.html_url };
+  return { id: created.id, url: created.html_url };
+}
+
+export async function updateIssueComment(
+  env: Env,
+  organizationId: string,
+  repositoryFullName: string,
+  commentId: number,
+  body: string
+): Promise<{ url: string }> {
+  const token = await getInstallationToken(env, organizationId);
+  const updated = await githubJson(token, `/repos/${repositoryFullName}/issues/comments/${commentId}`, issueCommentSchema, {
+    method: 'PATCH',
+    body: JSON.stringify({ body }),
+  });
+  return { url: updated.html_url };
+}
+
+const commitStatusSchema = z.object({
+  id: z.number(),
+});
+
+export type CommitStatusState = 'error' | 'failure' | 'pending' | 'success';
+
+export async function createCommitStatus(
+  env: Env,
+  organizationId: string,
+  repositoryFullName: string,
+  sha: string,
+  input: { state: CommitStatusState; context: string; description?: string; targetUrl?: string }
+): Promise<{ id: number }> {
+  const token = await getInstallationToken(env, organizationId);
+  const created = await githubJson(token, `/repos/${repositoryFullName}/statuses/${sha}`, commitStatusSchema, {
+    method: 'POST',
+    body: JSON.stringify({
+      state: input.state,
+      context: input.context,
+      description: input.description,
+      target_url: input.targetUrl,
+    }),
+  });
+  return { id: created.id };
 }
 
 export const findPullRequestByCommitRequestSchema = z.object({
@@ -240,6 +281,23 @@ export const createCommentRequestSchema = z.object({
   repositoryFullName: z.string().min(1),
   issueNumber: z.number().int().positive(),
   body: z.string().min(1),
+});
+
+export const updateCommentRequestSchema = z.object({
+  organizationId: z.string().min(1),
+  repositoryFullName: z.string().min(1),
+  commentId: z.number().int().positive(),
+  body: z.string().min(1),
+});
+
+export const createStatusRequestSchema = z.object({
+  organizationId: z.string().min(1),
+  repositoryFullName: z.string().min(1),
+  sha: z.string().min(1),
+  state: z.enum(['error', 'failure', 'pending', 'success']),
+  context: z.string().min(1),
+  description: z.string().max(140).optional(),
+  targetUrl: z.string().url().optional(),
 });
 
 export const listRepositoriesRequestSchema = z.object({
