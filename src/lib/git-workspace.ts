@@ -26,6 +26,7 @@ export class RepositoryWorkspace {
   private fs: IFs;
   private dir: string;
   private gitlinkOverrides = new Map<string, string>();
+  private gitlinkRemovals = new Set<string>();
 
   constructor(fs: IFs) {
     this.fs = fs;
@@ -99,7 +100,16 @@ export class RepositoryWorkspace {
     return entries;
   }
 
+  async removeFile(relPath: string): Promise<void> {
+    try {
+      await this.fs.promises.unlink(joinPath(this.dir, relPath));
+    } catch {
+      return;
+    }
+  }
+
   async gitlinkOid(relPath: string): Promise<string | null> {
+    if (this.gitlinkRemovals.has(relPath)) return null;
     const override = this.gitlinkOverrides.get(relPath);
     if (override) return override;
     const entries = await this.headEntries();
@@ -108,7 +118,13 @@ export class RepositoryWorkspace {
   }
 
   setGitlink(relPath: string, oid: string): void {
+    this.gitlinkRemovals.delete(relPath);
     this.gitlinkOverrides.set(relPath, oid);
+  }
+
+  removeGitlink(relPath: string): void {
+    this.gitlinkOverrides.delete(relPath);
+    this.gitlinkRemovals.add(relPath);
   }
 
   private async listWorkdirFiles(): Promise<string[]> {
@@ -184,6 +200,9 @@ export class RepositoryWorkspace {
     }
     for (const [relPath, oid] of this.gitlinkOverrides) {
       entries.set(relPath, { mode: '160000', type: 'commit', oid });
+    }
+    for (const relPath of this.gitlinkRemovals) {
+      entries.delete(relPath);
     }
     return this.buildTreeLevel(entries, '');
   }
