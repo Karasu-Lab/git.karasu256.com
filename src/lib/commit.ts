@@ -1,13 +1,15 @@
 import { z } from 'zod';
 import { getInstallationToken, getSigningKeyMaterial } from './api-auth';
 import {
+  MirrorNotSeededError,
   fetchRepositoryDefaultBranch,
   loadMirror,
+  mirrorKey,
   saveMirror,
   syncMirrorToDefaultBranch,
 } from './git-workspace';
 import { checkRepositoryAccess } from './repository-access';
-import { ensureBucket } from './storage';
+import { ensureBucket, objectExists, presignPutUrl } from './storage';
 
 export const commitRequestSchema = z.object({
   organizationId: z.string().min(1),
@@ -125,4 +127,32 @@ export async function runMirrorSync(
   return { repositoryFullName, headOid, defaultBranch };
 }
 
-export { loadMirror };
+export type MirrorUploadUrlOutcome =
+  | BlockedOutcome
+  | { exists: true; key: string }
+  | { exists: false; key: string; uploadUrl: string; expiresAt: string };
+
+export async function runMirrorUploadUrl(
+  env: Env,
+  repositoryId: number,
+  repositoryFullName: string
+): Promise<MirrorUploadUrlOutcome> {
+  const access = await checkRepositoryAccess(env, repositoryId);
+  if (!access.allowed) {
+    return {
+      outcome: 'blocked',
+      repositoryId: access.repositoryId,
+      remote: access.remote,
+      visibility: access.visibility,
+      allowed: false,
+      reason: access.reason,
+    };
+  }
+  await ensureBucket(env);
+  const key = mirrorKey(repositoryFullName);
+  if (await objectExists(env, key)) return { exists: true, key };
+  const { url, expiresAt } = presignPutUrl(env, key, 3600);
+  return { exists: false, key, uploadUrl: url, expiresAt };
+}
+
+export { MirrorNotSeededError, loadMirror };

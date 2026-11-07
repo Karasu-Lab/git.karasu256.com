@@ -253,8 +253,18 @@ export class RepositoryWorkspace {
   }
 }
 
-function mirrorKey(repositoryFullName: string): string {
+export function mirrorKey(repositoryFullName: string): string {
   return `mirrors/${repositoryFullName}.json`;
+}
+
+export class MirrorNotSeededError extends Error {
+  readonly repositoryFullName: string;
+
+  constructor(repositoryFullName: string) {
+    super(`The mirror of ${repositoryFullName} has not been seeded yet`);
+    this.name = 'MirrorNotSeededError';
+    this.repositoryFullName = repositoryFullName;
+  }
 }
 
 interface MirrorArchive {
@@ -302,20 +312,11 @@ export interface LoadedMirror {
 export async function loadMirror(env: Env, repositoryFullName: string, token: string): Promise<LoadedMirror> {
   const fs = createFsFromVolume(new Volume());
   const stored = await getObject(env, mirrorKey(repositoryFullName));
-  if (stored) {
-    await restoreGitDirectory(fs, stored);
-    const workspace = new RepositoryWorkspace(fs);
-    await workspace.fetchFromOrigin(token);
-    return { workspace, existed: true };
-  }
-  await git.clone({
-    fs,
-    http,
-    dir: WORKDIR,
-    url: `https://github.com/${repositoryFullName}.git`,
-    onAuth: () => ({ username: 'x-access-token', password: token }),
-  });
-  return { workspace: new RepositoryWorkspace(fs), existed: false };
+  if (!stored) throw new MirrorNotSeededError(repositoryFullName);
+  await restoreGitDirectory(fs, stored);
+  const workspace = new RepositoryWorkspace(fs);
+  await workspace.fetchFromOrigin(token);
+  return { workspace, existed: true };
 }
 
 export async function saveMirror(env: Env, repositoryFullName: string, workspace: RepositoryWorkspace): Promise<void> {

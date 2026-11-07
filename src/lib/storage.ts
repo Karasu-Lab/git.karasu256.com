@@ -91,6 +91,60 @@ export async function ensureBucket(env: Env): Promise<{ bucket: string; created:
   throw new Error(`Creating the storage bucket ${bucket} failed (${response.status}): ${detail}`);
 }
 
+export async function objectExists(env: Env, key: string): Promise<boolean> {
+  const response = await s3Request(env, 'HEAD', `/${encodeSegment(storageEnv(env).STORAGE_BUCKET)}/${objectPath(key)}`);
+  if (response.status === 404) return false;
+  if (!response.ok) {
+    throw new Error(`Checking ${key} in the storage bucket failed (${response.status})`);
+  }
+  return true;
+}
+
+export function presignPutUrl(env: Env, key: string, expiresInSeconds: number): { url: string; expiresAt: string } {
+  const storage = storageEnv(env);
+  const endpoint = new URL(storage.STORAGE_ENDPOINT);
+  const now = new Date();
+  const amzDate = now.toISOString().replace(/[:-]|\.\d{3}/g, '');
+  const dateStamp = amzDate.slice(0, 8);
+  const credentialScope = `${dateStamp}/${storage.STORAGE_REGION}/s3/aws4_request`;
+  const signedHeaders = 'content-type;host';
+  const canonicalUri = `${endpoint.pathname.replace(/\/$/, '')}/${encodeSegment(storage.STORAGE_BUCKET)}/${objectPath(key)}`;
+  const queryParams: [string, string][] = [
+    ['X-Amz-Algorithm', 'AWS4-HMAC-SHA256'],
+    ['X-Amz-Credential', `${storage.STORAGE_ACCESS_KEY_ID}/${credentialScope}`],
+    ['X-Amz-Date', amzDate],
+    ['X-Amz-Expires', String(expiresInSeconds)],
+    ['X-Amz-SignedHeaders', signedHeaders],
+  ];
+  const canonicalQueryString = queryParams
+    .map(([name, value]) => `${encodeSegment(name)}=${encodeSegment(value)}`)
+    .sort()
+    .join('&');
+  const canonicalRequest = [
+    'PUT',
+    canonicalUri,
+    canonicalQueryString,
+    `content-type:application/json\nhost:${endpoint.host}\n`,
+    signedHeaders,
+    'UNSIGNED-PAYLOAD',
+  ].join('\n');
+  const signingKey = hmac(
+    hmac(hmac(hmac(`AWS4${storage.STORAGE_SECRET_ACCESS_KEY}`, dateStamp), storage.STORAGE_REGION), 's3'),
+    'aws4_request'
+  );
+  const stringToSign = [
+    'AWS4-HMAC-SHA256',
+    amzDate,
+    credentialScope,
+    createHash('sha256').update(canonicalRequest, 'utf8').digest('hex'),
+  ].join('\n');
+  const signature = hmac(signingKey, stringToSign).toString('hex');
+  return {
+    url: `${endpoint.origin}${canonicalUri}?${canonicalQueryString}&X-Amz-Signature=${signature}`,
+    expiresAt: new Date(now.getTime() + expiresInSeconds * 1000).toISOString(),
+  };
+}
+
 export async function getObject(env: Env, key: string): Promise<Uint8Array | null> {
   const response = await s3Request(env, 'GET', `/${encodeSegment(storageEnv(env).STORAGE_BUCKET)}/${objectPath(key)}`);
   if (response.status === 404) return null;
