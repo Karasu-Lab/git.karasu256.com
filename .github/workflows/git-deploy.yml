@@ -22,6 +22,22 @@ jobs:
       CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
       NODE_AUTH_TOKEN: ${{ secrets.NODE_AUTH_TOKEN || secrets.GITHUB_TOKEN }}
     steps:
+      - name: Create the R2 bucket for repository mirrors
+        run: |
+          set +e
+          OUTPUT=$(npx --yes wrangler@4.155.0 r2 bucket create git.karasu256.com 2>&1)
+          STATUS=$?
+          set -e
+          echo "$OUTPUT"
+          if [ "$STATUS" -eq 0 ]; then
+            exit 0
+          fi
+          if npx --yes wrangler@4.155.0 r2 bucket list 2>/dev/null | grep -q "git.karasu256.com"; then
+            echo "The R2 bucket git.karasu256.com already exists; continuing."
+            exit 0
+          fi
+          echo "Creating the R2 bucket git.karasu256.com failed with exit code $STATUS."
+          exit "$STATUS"
       - name: Deploy the worker
         uses: Karasu-Lab/WorkersDeploy@v1
         with:

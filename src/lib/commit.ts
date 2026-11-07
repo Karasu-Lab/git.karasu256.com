@@ -7,6 +7,7 @@ import {
   syncMirrorToDefaultBranch,
 } from './git-workspace';
 import { checkRepositoryAccess } from './repository-access';
+import { ensureBucket } from './storage';
 
 export const commitRequestSchema = z.object({
   organizationId: z.string().min(1),
@@ -62,6 +63,7 @@ export async function runSignedCommit(env: Env, input: CommitRequest): Promise<C
       reason: access.reason,
     };
   }
+  await ensureBucket(env);
   const token = await getInstallationToken(env, input.organizationId);
   const material = await getSigningKeyMaterial(env, input.signingUserId);
   const defaultBranch = input.baseBranch ?? (await fetchRepositoryDefaultBranch(input.repositoryFullName, token));
@@ -116,6 +118,7 @@ export async function runMirrorSync(
       reason: access.reason,
     };
   }
+  await ensureBucket(env);
   const token = await getInstallationToken(env, organizationId);
   const defaultBranch = await fetchRepositoryDefaultBranch(repositoryFullName, token);
   const { headOid } = await syncMirrorToDefaultBranch(env, repositoryFullName, token, defaultBranch);
