@@ -378,6 +378,7 @@ export async function fetchRepositoryDefaultBranch(repositoryFullName: string, t
     headers: {
       accept: 'application/vnd.github+json',
       authorization: `Bearer ${token}`,
+      'user-agent': 'karasu-lab-git',
       'x-github-api-version': '2022-11-28',
     },
     cache: 'no-store',
