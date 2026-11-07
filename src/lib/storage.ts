@@ -1,10 +1,9 @@
 import { createHash, createHmac } from 'node:crypto';
 import { z } from 'zod';
 
-export const GIT_BUCKET_NAME = 'git.karasu256.com';
-
 const storageEnvSchema = z.object({
   STORAGE_ENDPOINT: z.url(),
+  STORAGE_BUCKET: z.string().min(1),
   STORAGE_ACCESS_KEY_ID: z.string().min(1),
   STORAGE_SECRET_ACCESS_KEY: z.string().min(1),
   STORAGE_REGION: z.string().default('auto'),
@@ -78,21 +77,22 @@ async function errorDetail(response: Response): Promise<string> {
 }
 
 export async function ensureBucket(env: Env): Promise<{ bucket: string; created: boolean }> {
-  const response = await s3Request(env, 'PUT', `/${encodeSegment(GIT_BUCKET_NAME)}`);
-  if (response.ok) return { bucket: GIT_BUCKET_NAME, created: true };
+  const bucket = storageEnv(env).STORAGE_BUCKET;
+  const response = await s3Request(env, 'PUT', `/${encodeSegment(bucket)}`);
+  if (response.ok) return { bucket, created: true };
   const detail = await errorDetail(response);
   if (
     detail.includes('BucketAlreadyExists') ||
     detail.includes('BucketAlreadyOwnedByYou') ||
     response.status === 409
   ) {
-    return { bucket: GIT_BUCKET_NAME, created: false };
+    return { bucket, created: false };
   }
-  throw new Error(`Creating the storage bucket ${GIT_BUCKET_NAME} failed (${response.status}): ${detail}`);
+  throw new Error(`Creating the storage bucket ${bucket} failed (${response.status}): ${detail}`);
 }
 
 export async function getObject(env: Env, key: string): Promise<Uint8Array | null> {
-  const response = await s3Request(env, 'GET', `/${encodeSegment(GIT_BUCKET_NAME)}/${objectPath(key)}`);
+  const response = await s3Request(env, 'GET', `/${encodeSegment(storageEnv(env).STORAGE_BUCKET)}/${objectPath(key)}`);
   if (response.status === 404) return null;
   if (!response.ok) {
     throw new Error(`Reading ${key} from the storage bucket failed (${response.status}): ${await errorDetail(response)}`);
@@ -101,7 +101,7 @@ export async function getObject(env: Env, key: string): Promise<Uint8Array | nul
 }
 
 export async function putObject(env: Env, key: string, body: Uint8Array, contentType: string): Promise<void> {
-  const response = await s3Request(env, 'PUT', `/${encodeSegment(GIT_BUCKET_NAME)}/${objectPath(key)}`, body, contentType);
+  const response = await s3Request(env, 'PUT', `/${encodeSegment(storageEnv(env).STORAGE_BUCKET)}/${objectPath(key)}`, body, contentType);
   if (!response.ok) {
     throw new Error(`Writing ${key} to the storage bucket failed (${response.status}): ${await errorDetail(response)}`);
   }

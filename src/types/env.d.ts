@@ -25,6 +25,7 @@ declare global {
     AUTH_API_URL: string;
     INTERNAL_API_SECRET?: string;
     STORAGE_ENDPOINT: string;
+    STORAGE_BUCKET: string;
     STORAGE_ACCESS_KEY_ID: string;
     STORAGE_SECRET_ACCESS_KEY: string;
     STORAGE_REGION?: string;

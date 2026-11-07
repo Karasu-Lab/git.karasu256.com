@@ -23,27 +23,33 @@ jobs:
       NODE_AUTH_TOKEN: ${{ secrets.NODE_AUTH_TOKEN || secrets.GITHUB_TOKEN }}
     steps:
       - name: Create the R2 bucket for repository mirrors
+        env:
+          STORAGE_BUCKET: ${{ vars.STORAGE_BUCKET }}
         run: |
+          if [ -z "$STORAGE_BUCKET" ]; then
+            echo "The STORAGE_BUCKET repository variable is not set."
+            exit 1
+          fi
           set +e
-          OUTPUT=$(npx --yes wrangler@4.155.0 r2 bucket create git.karasu256.com 2>&1)
+          OUTPUT=$(npx --yes wrangler@4.155.0 r2 bucket create "$STORAGE_BUCKET" 2>&1)
           STATUS=$?
           set -e
           echo "$OUTPUT"
           if [ "$STATUS" -eq 0 ]; then
             exit 0
           fi
-          if npx --yes wrangler@4.155.0 r2 bucket list 2>/dev/null | grep -q "git.karasu256.com"; then
-            echo "The R2 bucket git.karasu256.com already exists; continuing."
+          if echo "$OUTPUT" | grep -qi "already exists"; then
+            echo "The R2 bucket $STORAGE_BUCKET already exists; continuing."
             exit 0
           fi
-          echo "Creating the R2 bucket git.karasu256.com failed with exit code $STATUS."
+          echo "Creating the R2 bucket $STORAGE_BUCKET failed with exit code $STATUS."
           exit "$STATUS"
       - name: Deploy the worker
         uses: Karasu-Lab/WorkersDeploy@v1
         with:
           mode: production
           worker-name: git-karasu256-com
-          secret-names: INTERNAL_API_SECRET STORAGE_ACCESS_KEY_ID STORAGE_SECRET_ACCESS_KEY
+          secret-names: INTERNAL_API_SECRET STORAGE_ACCESS_KEY_ID STORAGE_SECRET_ACCESS_KEY STORAGE_BUCKET STORAGE_ENDPOINT
           vars-json: ${{ toJSON(vars) }}
           secrets-json: ${{ toJSON(secrets) }}
 
@@ -64,6 +70,6 @@ jobs:
         with:
           mode: preview
           worker-name: git-karasu256-com
-          secret-names: INTERNAL_API_SECRET STORAGE_ACCESS_KEY_ID STORAGE_SECRET_ACCESS_KEY
+          secret-names: INTERNAL_API_SECRET STORAGE_ACCESS_KEY_ID STORAGE_SECRET_ACCESS_KEY STORAGE_BUCKET STORAGE_ENDPOINT
           vars-json: ${{ toJSON(vars) }}
           secrets-json: ${{ toJSON(secrets) }}
