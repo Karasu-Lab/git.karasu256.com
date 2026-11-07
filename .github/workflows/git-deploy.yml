@@ -22,8 +22,7 @@ jobs:
       CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
       NODE_AUTH_TOKEN: ${{ secrets.NODE_AUTH_TOKEN || secrets.GITHUB_TOKEN }}
     steps:
-      - name: Create the R2 bucket for repository mirrors
-        env:
+      - env:
           STORAGE_BUCKET: ${{ vars.STORAGE_BUCKET }}
         run: |
           if [ -z "$STORAGE_BUCKET" ]; then
