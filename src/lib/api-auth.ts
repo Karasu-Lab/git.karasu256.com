@@ -42,6 +42,11 @@ async function apiAuthJson<T>(env: Env, path: string, body: unknown): Promise<T>
   return (await response.json()) as T;
 }
 
+export async function getAppJwt(env: Env): Promise<string> {
+  const data = await apiAuthJson<{ token: string }>(env, '/api/internal/github-app/token', {});
+  return data.token;
+}
+
 export async function getInstallationToken(env: Env, organizationId: string): Promise<string> {
   const data = await apiAuthJson<{ token: string; expiresAt: string }>(
     env,

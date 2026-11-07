@@ -19,6 +19,7 @@ import {
   listInstallationRepositories,
   listRepositoriesRequestSchema,
 } from './lib/github-repositories';
+import { reregisterAppWebhook, reregisterWebhookRequestSchema } from './lib/github-app';
 import { checkRepositoryAccess } from './lib/repository-access';
 import { rejectInvalidSignature } from './lib/signature-gate';
 import { ensureBucket } from './lib/storage';
@@ -69,6 +70,12 @@ const app = new Elysia({ adapter: CloudflareAdapter, aot: false, normalize: 'typ
   .post('/api/internal/storage/bucket', async () => {
     const result = await ensureBucket(env);
     return Response.json({ bucket: result.bucket, created: result.created });
+  })
+  .post('/api/internal/github-app/webhook', async ({ body }) => {
+    const parsed = reregisterWebhookRequestSchema.safeParse(body);
+    if (!parsed.success) return Response.json({ error: 'Bad Request' }, { status: 400 });
+    const result = await reregisterAppWebhook(env, parsed.data);
+    return Response.json(result);
   })
   .post('/api/internal/repositories/access', async ({ body }) => {
     const parsed = accessRequestSchema.safeParse(body);
