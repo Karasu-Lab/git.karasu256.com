@@ -46,7 +46,10 @@ async function readJson(request: Request): Promise<unknown> {
 }
 
 const app = new Elysia({ adapter: CloudflareAdapter, aot: false, normalize: 'typebox' })
-  .onError(({ error }) => {
+  .onError(({ error, code }) => {
+    if (code === 'NOT_FOUND') {
+      return Response.json({ error: 'not_found' }, { status: 404 });
+    }
     if (error instanceof z.ZodError) {
       return Response.json({ error: 'Bad Request', issues: error.issues.map((issue) => issue.message) }, { status: 400 });
     }
