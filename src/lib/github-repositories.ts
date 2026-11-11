@@ -1,5 +1,17 @@
 import { z } from 'zod';
 import { getInstallationToken } from './api-auth';
+import {
+  branchNameSchema,
+  byteLength,
+  clientPayloadSchema,
+  encodePathSegments,
+  fileContentSchema,
+  filePathSchema,
+  ownerLoginSchema,
+  repositoryFullNameSchema,
+  repositoryNameSchema,
+  shaSchema,
+} from './validation';
 
 const GITHUB_API_URL = 'https://api.github.com';
 
@@ -43,6 +55,16 @@ export interface InstallationRepository {
   private: boolean;
   htmlUrl: string;
   defaultBranch: string;
+}
+
+export class BranchExistsError extends Error {
+  readonly branch: string;
+
+  constructor(branch: string) {
+    super(`branch ${branch} already exists`);
+    this.name = 'BranchExistsError';
+    this.branch = branch;
+  }
 }
 
 class AutoMergeNotGatedError extends Error {
@@ -108,7 +130,7 @@ export async function createInstallationRepository(
   body: { name: string; description?: string; private?: boolean; isTemplate?: boolean }
 ): Promise<InstallationRepository> {
   const token = await getInstallationToken(env, organizationId);
-  const path = target.type === 'Organization' ? `/orgs/${target.login}/repos` : '/user/repos';
+  const path = target.type === 'Organization' ? `/orgs/${encodeURIComponent(target.login)}/repos` : '/user/repos';
   const created = await githubJson(token, path, repositorySchema, {
     method: 'POST',
     body: JSON.stringify({
@@ -123,7 +145,7 @@ export async function createInstallationRepository(
 }
 
 async function enableRepositoryAutoMerge(token: string, repositoryFullName: string): Promise<void> {
-  const path = `/repos/${repositoryFullName}`;
+  const path = `/repos/${encodePathSegments(repositoryFullName)}`;
   const response = await githubFetch(token, path, {
     method: 'PATCH',
     body: JSON.stringify({ allow_auto_merge: true }),
@@ -152,7 +174,7 @@ async function enablePullRequestAutoMerge(token: string, pullRequestNodeId: stri
 }
 
 async function mergePullRequest(token: string, repositoryFullName: string, pullRequestNumber: number): Promise<void> {
-  const path = `/repos/${repositoryFullName}/pulls/${pullRequestNumber}/merge`;
+  const path = `/repos/${encodePathSegments(repositoryFullName)}/pulls/${pullRequestNumber}/merge`;
   const response = await githubFetch(token, path, {
     method: 'PUT',
     body: JSON.stringify({ merge_method: 'merge' }),
@@ -178,7 +200,7 @@ export async function createBotPullRequest(
   }
   const created = await githubJson(
     token,
-    `/repos/${input.repositoryFullName}/pulls`,
+    `/repos/${encodePathSegments(input.repositoryFullName)}/pulls`,
     pullRequestSchema,
     {
       method: 'POST',
@@ -205,7 +227,7 @@ export async function findMergedPullRequestByCommit(
   const token = await getInstallationToken(env, organizationId);
   const associated = await githubJson(
     token,
-    `/repos/${repositoryFullName}/commits/${sha}/pulls`,
+    `/repos/${encodePathSegments(repositoryFullName)}/commits/${encodeURIComponent(sha)}/pulls`,
     z.array(associatedPullRequestSchema)
   );
   const merged = associated.filter((entry) => entry.merged_at !== null);
@@ -222,7 +244,7 @@ export async function createIssueComment(
   body: string
 ): Promise<{ id: number; url: string }> {
   const token = await getInstallationToken(env, organizationId);
-  const created = await githubJson(token, `/repos/${repositoryFullName}/issues/${issueNumber}/comments`, issueCommentSchema, {
+  const created = await githubJson(token, `/repos/${encodePathSegments(repositoryFullName)}/issues/${issueNumber}/comments`, issueCommentSchema, {
     method: 'POST',
     body: JSON.stringify({ body }),
   });
@@ -237,11 +259,23 @@ export async function updateIssueComment(
   body: string
 ): Promise<{ url: string }> {
   const token = await getInstallationToken(env, organizationId);
-  const updated = await githubJson(token, `/repos/${repositoryFullName}/issues/comments/${commentId}`, issueCommentSchema, {
+  const updated = await githubJson(token, `/repos/${encodePathSegments(repositoryFullName)}/issues/comments/${commentId}`, issueCommentSchema, {
     method: 'PATCH',
     body: JSON.stringify({ body }),
   });
   return { url: updated.html_url };
+}
+
+function gitObjectSchema() {
+  return z.object({ sha: z.string() });
+}
+
+function gitRefSchema() {
+  return z.object({ object: z.object({ sha: z.string() }) });
+}
+
+function gitCommitSchema() {
+  return z.object({ tree: z.object({ sha: z.string() }) });
 }
 
 const commitStatusSchema = z.object({
@@ -258,7 +292,7 @@ export async function createCommitStatus(
   input: { state: CommitStatusState; context: string; description?: string; targetUrl?: string }
 ): Promise<{ id: number }> {
   const token = await getInstallationToken(env, organizationId);
-  const created = await githubJson(token, `/repos/${repositoryFullName}/statuses/${sha}`, commitStatusSchema, {
+  const created = await githubJson(token, `/repos/${encodePathSegments(repositoryFullName)}/statuses/${encodeURIComponent(sha)}`, commitStatusSchema, {
     method: 'POST',
     body: JSON.stringify({
       state: input.state,
@@ -270,30 +304,111 @@ export async function createCommitStatus(
   return { id: created.id };
 }
 
+async function githubGit<T>(token: string, path: string, schema: z.ZodType<T>, body: unknown): Promise<T> {
+  return githubJson(token, path, schema, { method: 'POST', body: JSON.stringify(body) });
+}
+
+async function branchExists(token: string, repoPath: string, branch: string): Promise<boolean> {
+  const path = `${repoPath}/git/ref/heads/${encodePathSegments(branch)}`;
+  const response = await githubFetch(token, path);
+  if (response.status === 404) return false;
+  if (!response.ok) throw new Error(JSON.stringify({ error: 'github_api_error', status: response.status, path }));
+  return true;
+}
+
+export async function commitContentsToNewBranch(
+  env: Env,
+  organizationId: string,
+  input: {
+    repositoryFullName: string;
+    branch: string;
+    baseBranch: string;
+    message: string;
+    files: { path: string; content: string }[];
+    deletions: string[];
+  }
+): Promise<{ outcome: 'pushed'; commitOid: string; branch: string } | { outcome: 'no_changes'; branch: string }> {
+  const token = await getInstallationToken(env, organizationId);
+  const repoPath = `/repos/${encodePathSegments(input.repositoryFullName)}`;
+  if (await branchExists(token, repoPath, input.branch)) throw new BranchExistsError(input.branch);
+
+  const baseRef = await githubJson(token, `${repoPath}/git/ref/heads/${encodePathSegments(input.baseBranch)}`, gitRefSchema());
+  const baseSha = baseRef.object.sha;
+  const baseCommit = await githubJson(token, `${repoPath}/git/commits/${encodeURIComponent(baseSha)}`, gitCommitSchema());
+  const baseTreeSha = baseCommit.tree.sha;
+
+  const blobs = await Promise.all(
+    input.files.map(async (file) => {
+      const blob = await githubGit(token, `${repoPath}/git/blobs`, gitObjectSchema(), {
+        content: file.content,
+        encoding: 'utf-8',
+      });
+      return { path: file.path, mode: '100644', type: 'blob', sha: blob.sha };
+    })
+  );
+  const removals = input.deletions.map((path) => ({ path, mode: '100644', type: 'blob', sha: null }));
+  const tree = await githubGit(token, `${repoPath}/git/trees`, gitObjectSchema(), {
+    base_tree: baseTreeSha,
+    tree: [...blobs, ...removals],
+  });
+  if (tree.sha === baseTreeSha) return { outcome: 'no_changes', branch: input.branch };
+
+  const commit = await githubGit(token, `${repoPath}/git/commits`, gitObjectSchema(), {
+    message: input.message,
+    tree: tree.sha,
+    parents: [baseSha],
+  });
+
+  const refPath = `${repoPath}/git/refs`;
+  const response = await githubFetch(token, refPath, {
+    method: 'POST',
+    body: JSON.stringify({ ref: `refs/heads/${input.branch}`, sha: commit.sha }),
+  });
+  if (response.status === 422) throw new BranchExistsError(input.branch);
+  if (!response.ok) throw new Error(JSON.stringify({ error: 'github_api_error', status: response.status, path: refPath }));
+  return { outcome: 'pushed', commitOid: commit.sha, branch: input.branch };
+}
+
+export async function createRepositoryDispatch(
+  env: Env,
+  organizationId: string,
+  repositoryFullName: string,
+  eventType: string,
+  clientPayload: Record<string, unknown>
+): Promise<void> {
+  const token = await getInstallationToken(env, organizationId);
+  const path = `/repos/${encodePathSegments(repositoryFullName)}/dispatches`;
+  const response = await githubFetch(token, path, {
+    method: 'POST',
+    body: JSON.stringify({ event_type: eventType, client_payload: clientPayload }),
+  });
+  if (!response.ok) throw new Error(JSON.stringify({ error: 'github_api_error', status: response.status, path }));
+}
+
 export const findPullRequestByCommitRequestSchema = z.object({
   organizationId: z.string().min(1),
-  repositoryFullName: z.string().min(1),
-  sha: z.string().min(1),
+  repositoryFullName: repositoryFullNameSchema(),
+  sha: shaSchema(),
 });
 
 export const createCommentRequestSchema = z.object({
   organizationId: z.string().min(1),
-  repositoryFullName: z.string().min(1),
+  repositoryFullName: repositoryFullNameSchema(),
   issueNumber: z.number().int().positive(),
   body: z.string().min(1),
 });
 
 export const updateCommentRequestSchema = z.object({
   organizationId: z.string().min(1),
-  repositoryFullName: z.string().min(1),
+  repositoryFullName: repositoryFullNameSchema(),
   commentId: z.number().int().positive(),
   body: z.string().min(1),
 });
 
 export const createStatusRequestSchema = z.object({
   organizationId: z.string().min(1),
-  repositoryFullName: z.string().min(1),
-  sha: z.string().min(1),
+  repositoryFullName: repositoryFullNameSchema(),
+  sha: shaSchema(),
   state: z.enum(['error', 'failure', 'pending', 'success']),
   context: z.string().min(1),
   description: z.string().max(140).optional(),
@@ -307,8 +422,8 @@ export const listRepositoriesRequestSchema = z.object({
 export const createRepositoryRequestSchema = z.object({
   organizationId: z.string().min(1),
   targetType: z.enum(['Organization', 'User']),
-  targetLogin: z.string().min(1),
-  name: z.string().trim().min(1).max(100),
+  targetLogin: ownerLoginSchema(),
+  name: repositoryNameSchema(),
   description: z.string().max(350).optional(),
   private: z.boolean().optional(),
   isTemplate: z.boolean().optional(),
@@ -316,10 +431,39 @@ export const createRepositoryRequestSchema = z.object({
 
 export const createPullRequestRequestSchema = z.object({
   organizationId: z.string().min(1),
-  repositoryFullName: z.string().min(1),
+  repositoryFullName: repositoryFullNameSchema(),
   title: z.string().min(1),
-  head: z.string().min(1),
-  base: z.string().min(1),
+  head: branchNameSchema(),
+  base: branchNameSchema(),
   body: z.string().optional(),
   enableAutoMerge: z.boolean().optional(),
 });
+
+export function commitContentsRequestSchema() {
+  const maxFiles = 50;
+  const maxTotalBytes = 4 * 1024 * 1024;
+  return z
+    .object({
+      organizationId: z.string().min(1),
+      repositoryFullName: repositoryFullNameSchema(),
+      branch: branchNameSchema(),
+      baseBranch: branchNameSchema(),
+      message: z.string().min(1),
+      files: z.array(z.object({ path: filePathSchema(), content: fileContentSchema() })).max(maxFiles).default([]),
+      deletions: z.array(filePathSchema()).max(maxFiles).default([]),
+    })
+    .refine((value) => value.files.reduce((total, file) => total + byteLength(file.content), 0) <= maxTotalBytes)
+    .refine((value) => {
+      const paths = [...value.files.map((file) => file.path), ...value.deletions];
+      return new Set(paths).size === paths.length;
+    });
+}
+
+export function createDispatchRequestSchema() {
+  return z.object({
+    organizationId: z.string().min(1),
+    repositoryFullName: repositoryFullNameSchema(),
+    eventType: z.enum(['pointer-update', 'link-package', 'unlink-package']),
+    clientPayload: clientPayloadSchema(),
+  });
+}
