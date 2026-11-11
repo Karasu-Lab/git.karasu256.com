@@ -45,20 +45,8 @@ async function apiAuthJson<T>(env: Env, path: string, body: unknown): Promise<T>
 export async function getInstallationToken(env: Env, organizationId: string): Promise<string> {
   const data = await apiAuthJson<{ token: string; expiresAt: string }>(
     env,
-    `/api/internal/tenants/${organizationId}/github-installation-token`,
+    `/api/internal/tenants/${encodeURIComponent(organizationId)}/github-installation-token`,
     {}
   );
   return data.token;
-}
-
-export interface SigningKeyMaterial {
-  userId: string;
-  privateKey: string;
-  publicKey: string;
-  committerName: string;
-  committerEmail: string;
-}
-
-export async function getSigningKeyMaterial(env: Env, userId: string): Promise<SigningKeyMaterial> {
-  return apiAuthJson<SigningKeyMaterial>(env, `/api/internal/users/${encodeURIComponent(userId)}/signing-key-material`, {});
 }

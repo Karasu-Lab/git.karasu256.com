@@ -3,21 +3,19 @@ import { CloudflareAdapter } from 'elysia/adapter/cloudflare-worker';
 import { env as cfEnv } from 'cloudflare:workers';
 import { z } from 'zod';
 import { resolveEnv } from './constants';
-import {
-  MirrorNotSeededError,
-  commitRequestSchema,
-  runMirrorSync,
-  runMirrorUploadUrl,
-  runSignedCommit,
-} from './lib/commit';
 import { ApiAuthError } from './lib/api-auth';
 import {
+  BranchExistsError,
+  commitContentsRequestSchema,
+  commitContentsToNewBranch,
   createBotPullRequest,
   createCommentRequestSchema,
   createCommitStatus,
   createInstallationRepository,
   createIssueComment,
+  createDispatchRequestSchema,
   createPullRequestRequestSchema,
+  createRepositoryDispatch,
   createRepositoryRequestSchema,
   createStatusRequestSchema,
   findMergedPullRequestByCommit,
@@ -27,36 +25,9 @@ import {
   updateCommentRequestSchema,
   updateIssueComment,
 } from './lib/github-repositories';
-import { checkRepositoryAccess } from './lib/repository-access';
 import { rejectInvalidSignature } from './lib/signature-gate';
-import { ensureBucket } from './lib/storage';
 
 const env = resolveEnv(cfEnv as Env);
-
-const organizationRepositorySchema = z.object({
-  organizationId: z.string().min(1),
-  repositoryId: z.number().int(),
-  repositoryFullName: z.string().min(1),
-});
-
-const accessRequestSchema = z.object({
-  repositoryId: z.number().int(),
-});
-
-const uploadUrlRequestSchema = z.object({
-  repositoryId: z.number().int(),
-  repositoryFullName: z.string().min(1),
-});
-
-function mirrorNotSeededResponse(error: unknown): Response | null {
-  if (error instanceof MirrorNotSeededError) {
-    return Response.json(
-      { error: 'mirror_not_seeded', repositoryFullName: error.repositoryFullName },
-      { status: 409 }
-    );
-  }
-  return null;
-}
 
 const app = new Elysia({ adapter: CloudflareAdapter, aot: false, normalize: 'typebox' })
   .onError(({ error, code }) => {
@@ -66,6 +37,9 @@ const app = new Elysia({ adapter: CloudflareAdapter, aot: false, normalize: 'typ
     if (error instanceof ApiAuthError && error.code) {
       return Response.json({ error: error.code }, { status: error.status });
     }
+    if (error instanceof BranchExistsError) {
+      return Response.json({ error: 'branch_exists', branch: error.branch }, { status: 409 });
+    }
     if (error instanceof z.ZodError) {
       return Response.json({ error: 'Bad Request', issues: error.issues.map((issue) => issue.message) }, { status: 400 });
     }
@@ -73,16 +47,6 @@ const app = new Elysia({ adapter: CloudflareAdapter, aot: false, normalize: 'typ
       { error: error instanceof Error ? error.message : 'Internal Server Error' },
       { status: 500 }
     );
-  })
-  .post('/api/internal/storage/bucket', async () => {
-    const result = await ensureBucket(env);
-    return Response.json({ bucket: result.bucket, created: result.created });
-  })
-  .post('/api/internal/repositories/access', async ({ body }) => {
-    const parsed = accessRequestSchema.safeParse(body);
-    if (!parsed.success) return Response.json({ error: 'Bad Request' }, { status: 400 });
-    const access = await checkRepositoryAccess(env, parsed.data.repositoryId);
-    return Response.json(access);
   })
   .post('/api/internal/repositories/list', async ({ body }) => {
     const parsed = listRepositoriesRequestSchema.safeParse(body);
@@ -150,81 +114,23 @@ const app = new Elysia({ adapter: CloudflareAdapter, aot: false, normalize: 'typ
     });
     return Response.json({ status });
   })
-  .post('/api/internal/mirrors/upload-url', async ({ body }) => {
-    const parsed = uploadUrlRequestSchema.safeParse(body);
+  .post('/api/internal/contents/commit', async ({ body }) => {
+    const parsed = commitContentsRequestSchema().safeParse(body);
     if (!parsed.success) return Response.json({ error: 'Bad Request' }, { status: 400 });
-    const result = await runMirrorUploadUrl(env, parsed.data.repositoryId, parsed.data.repositoryFullName);
-    if ('outcome' in result && result.outcome === 'blocked') {
-      return Response.json(
-        {
-          accepted: false,
-          repositoryId: result.repositoryId,
-          remote: result.remote,
-          visibility: result.visibility,
-          allowed: false,
-          reason: result.reason,
-        },
-        { status: 403 }
-      );
-    }
-    return Response.json(result);
+    const { organizationId, ...input } = parsed.data;
+    return Response.json(await commitContentsToNewBranch(env, organizationId, input));
   })
-  .post('/api/internal/mirrors/sync', async ({ body }) => {
-    const parsed = organizationRepositorySchema.safeParse(body);
+  .post('/api/internal/dispatches/create', async ({ body }) => {
+    const parsed = createDispatchRequestSchema().safeParse(body);
     if (!parsed.success) return Response.json({ error: 'Bad Request' }, { status: 400 });
-    let result: Awaited<ReturnType<typeof runMirrorSync>>;
-    try {
-      result = await runMirrorSync(
-        env,
-        parsed.data.organizationId,
-        parsed.data.repositoryId,
-        parsed.data.repositoryFullName
-      );
-    } catch (error) {
-      const response = mirrorNotSeededResponse(error);
-      if (response) return response;
-      throw error;
-    }
-    if ('outcome' in result && result.outcome === 'blocked') {
-      return Response.json(
-        {
-          accepted: false,
-          repositoryId: result.repositoryId,
-          remote: result.remote,
-          visibility: result.visibility,
-          allowed: false,
-          reason: result.reason,
-        },
-        { status: 403 }
-      );
-    }
-    return Response.json(result);
-  })
-  .post('/api/internal/mirrors/commit', async ({ body }) => {
-    const parsed = commitRequestSchema.safeParse(body);
-    if (!parsed.success) return Response.json({ error: 'Bad Request' }, { status: 400 });
-    let result: Awaited<ReturnType<typeof runSignedCommit>>;
-    try {
-      result = await runSignedCommit(env, parsed.data);
-    } catch (error) {
-      const response = mirrorNotSeededResponse(error);
-      if (response) return response;
-      throw error;
-    }
-    if (result.outcome === 'blocked') {
-      return Response.json(
-        {
-          accepted: false,
-          repositoryId: result.repositoryId,
-          remote: result.remote,
-          visibility: result.visibility,
-          allowed: false,
-          reason: result.reason,
-        },
-        { status: 403 }
-      );
-    }
-    return Response.json(result);
+    await createRepositoryDispatch(
+      env,
+      parsed.data.organizationId,
+      parsed.data.repositoryFullName,
+      parsed.data.eventType,
+      parsed.data.clientPayload
+    );
+    return Response.json({ dispatched: true });
   });
 
 export default {

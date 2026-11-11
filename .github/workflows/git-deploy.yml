@@ -22,33 +22,12 @@ jobs:
       CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
       NODE_AUTH_TOKEN: ${{ secrets.NODE_AUTH_TOKEN || secrets.GITHUB_TOKEN }}
     steps:
-      - env:
-          STORAGE_BUCKET: ${{ vars.STORAGE_BUCKET }}
-        run: |
-          if [ -z "$STORAGE_BUCKET" ]; then
-            echo "The STORAGE_BUCKET repository variable is not set."
-            exit 1
-          fi
-          set +e
-          OUTPUT=$(npx --yes wrangler@4.155.0 r2 bucket create "$STORAGE_BUCKET" 2>&1)
-          STATUS=$?
-          set -e
-          echo "$OUTPUT"
-          if [ "$STATUS" -eq 0 ]; then
-            exit 0
-          fi
-          if echo "$OUTPUT" | grep -qi "already exists"; then
-            echo "The R2 bucket $STORAGE_BUCKET already exists; continuing."
-            exit 0
-          fi
-          echo "Creating the R2 bucket $STORAGE_BUCKET failed with exit code $STATUS."
-          exit "$STATUS"
       - name: Deploy the worker
-        uses: Karasu-Lab/WorkersDeploy@v1
+        uses: Karasu-Lab/WorkersDeploy@815f0a552fe911085a3e683060f36bf9febbad5c
         with:
           mode: production
           worker-name: git-karasu256-com
-          secret-names: INTERNAL_API_SECRET STORAGE_ACCESS_KEY_ID STORAGE_SECRET_ACCESS_KEY STORAGE_BUCKET STORAGE_ENDPOINT
+          secret-names: INTERNAL_API_SECRET
           vars-json: ${{ toJSON(vars) }}
           secrets-json: ${{ toJSON(secrets) }}
 
@@ -65,10 +44,10 @@ jobs:
       NODE_AUTH_TOKEN: ${{ secrets.NODE_AUTH_TOKEN || secrets.GITHUB_TOKEN }}
     steps:
       - name: Deploy the worker
-        uses: Karasu-Lab/WorkersDeploy@v1
+        uses: Karasu-Lab/WorkersDeploy@815f0a552fe911085a3e683060f36bf9febbad5c
         with:
           mode: preview
           worker-name: git-karasu256-com
-          secret-names: INTERNAL_API_SECRET STORAGE_ACCESS_KEY_ID STORAGE_SECRET_ACCESS_KEY STORAGE_BUCKET STORAGE_ENDPOINT
+          secret-names: INTERNAL_API_SECRET
           vars-json: ${{ toJSON(vars) }}
           secrets-json: ${{ toJSON(secrets) }}
