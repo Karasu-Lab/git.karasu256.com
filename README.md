@@ -42,7 +42,6 @@ The deploy workflow (`.github/workflows/git-deploy.yml`) is a thin wrapper aroun
 | --- | --- | --- |
 | `CLOUDFLARE_API_TOKEN` | Secret | Authenticating wrangler against Cloudflare |
 | `CLOUDFLARE_ACCOUNT_ID` | Variable | The Cloudflare account the worker is deployed to |
-| `NODE_AUTH_TOKEN` | Secret | Reading the `@karasu-lab` packages from GitHub Packages during the build; falls back to the workflow's `GITHUB_TOKEN` |
 
 ### Worker secrets
 
